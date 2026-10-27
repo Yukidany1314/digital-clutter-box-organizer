@@ -1,0 +1,6 @@
+{
+  "name": "ClutterBox — Digital Clutter Organizer",
+  "description": "Organize saved links, articles, tasks, and notes with automated Forgotten Treasure detection, clutter score, and one-click rescues.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
