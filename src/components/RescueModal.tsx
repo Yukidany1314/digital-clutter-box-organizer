@@ -8,14 +8,14 @@ import {
   Bookmark,
   Trash2,
   Clock,
-  Compass,
   ArrowRight,
   Globe,
   BookOpen,
   Video,
   FileText,
+  Archive,
 } from 'lucide-react';
-import { ClutterItem, ItemCategory } from '../types';
+import { ClutterItem } from '../types';
 import { calculateDaysSince } from '../utils/clutterScore';
 
 interface RescueModalProps {
@@ -26,7 +26,7 @@ interface RescueModalProps {
   initialItem?: ClutterItem | null;
   onRescueAction: (
     id: string,
-    action: 'reviewed' | 'complete' | 'reference' | 'deleted'
+    action: 'revisit' | 'complete' | 'reference' | 'archive' | 'delete'
   ) => void;
 }
 
@@ -41,14 +41,12 @@ export const RescueModal: React.FC<RescueModalProps> = ({
   const [selectedItem, setSelectedItem] = useState<ClutterItem | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
 
-  // Pick an item on modal open or when list changes
   useEffect(() => {
     if (!isOpen) return;
 
     if (initialItem && forgottenItems.some((i) => i.id === initialItem.id)) {
       setSelectedItem(initialItem);
     } else if (forgottenItems.length > 0) {
-      // Pick random
       const randIndex = Math.floor(Math.random() * forgottenItems.length);
       setSelectedItem(forgottenItems[randIndex]);
     } else {
@@ -62,7 +60,6 @@ export const RescueModal: React.FC<RescueModalProps> = ({
     if (forgottenItems.length <= 1) return;
     setIsShuffling(true);
     setTimeout(() => {
-      // Pick another random item that isn't the currently selected one
       const candidates = forgottenItems.filter((i) => i.id !== selectedItem?.id);
       const next = candidates[Math.floor(Math.random() * candidates.length)] || forgottenItems[0];
       setSelectedItem(next);
@@ -70,10 +67,10 @@ export const RescueModal: React.FC<RescueModalProps> = ({
     }, 200);
   };
 
-  const handleAction = (action: 'reviewed' | 'complete' | 'reference' | 'deleted') => {
+  const handleAction = (action: 'revisit' | 'complete' | 'reference' | 'archive' | 'delete') => {
     if (!selectedItem) return;
     onRescueAction(selectedItem.id, action);
-    // If more items remain, pick the next one or close if none left
+
     const remaining = forgottenItems.filter((i) => i.id !== selectedItem.id);
     if (remaining.length > 0) {
       setSelectedItem(remaining[0]);
@@ -82,17 +79,20 @@ export const RescueModal: React.FC<RescueModalProps> = ({
     }
   };
 
-  const daysWaiting = selectedItem ? calculateDaysSince(selectedItem.lastReviewedAt) : 0;
+  const reviewDate = selectedItem ? selectedItem.last_reviewed_at || selectedItem.created_at : '';
+  const daysWaiting = calculateDaysSince(reviewDate);
 
   const renderTypeIcon = () => {
     if (!selectedItem) return null;
-    switch (selectedItem.type) {
+    switch (selectedItem.content_type) {
       case 'video':
         return <Video className="w-4 h-4 text-rose-500" />;
       case 'article':
         return <BookOpen className="w-4 h-4 text-indigo-500" />;
       case 'note':
         return <FileText className="w-4 h-4 text-emerald-500" />;
+      case 'task':
+        return <CheckCircle2 className="w-4 h-4 text-amber-500" />;
       case 'link':
       default:
         return <Globe className="w-4 h-4 text-blue-500" />;
@@ -108,7 +108,7 @@ export const RescueModal: React.FC<RescueModalProps> = ({
       />
 
       {/* Modal Dialog */}
-      <div className="relative w-full max-w-lg bg-white rounded-3xl border border-amber-200/90 shadow-2xl shadow-amber-900/10 overflow-hidden transform transition-all">
+      <div className="relative w-full max-w-lg bg-white rounded-3xl border border-amber-200/90 shadow-2xl overflow-hidden transform transition-all">
         {/* Header Ribbon */}
         <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -149,7 +149,6 @@ export const RescueModal: React.FC<RescueModalProps> = ({
         {/* Content Body */}
         {selectedItem ? (
           <div className="p-6">
-            {/* Waiting Time Banner */}
             <div className="flex items-center justify-between p-3 rounded-xl bg-amber-50/70 border border-amber-200/70 text-xs mb-4">
               <span className="flex items-center gap-1.5 text-amber-900 font-semibold">
                 <Clock className="w-4 h-4 text-amber-600" />
@@ -160,15 +159,14 @@ export const RescueModal: React.FC<RescueModalProps> = ({
               </span>
             </div>
 
-            {/* Item Card Preview */}
             <div className="bg-slate-50/70 rounded-2xl p-4 border border-slate-200/80 mb-5">
               <div className="flex items-center gap-2 text-xs text-slate-500 font-medium mb-1.5">
                 <span className="flex items-center gap-1">
                   {renderTypeIcon()}
-                  <span className="capitalize">{selectedItem.type}</span>
+                  <span className="capitalize">{selectedItem.content_type}</span>
                 </span>
                 <span aria-hidden="true" className="text-slate-300">·</span>
-                <span className="font-semibold text-indigo-600">
+                <span className="font-semibold text-indigo-600 uppercase">
                   {selectedItem.category} Box
                 </span>
               </div>
@@ -185,9 +183,9 @@ export const RescueModal: React.FC<RescueModalProps> = ({
                 </div>
               )}
 
-              {selectedItem.note && (
+              {selectedItem.description && (
                 <p className="mt-2 text-xs text-slate-600 bg-white p-3 rounded-xl border border-slate-100 whitespace-pre-line leading-relaxed">
-                  {selectedItem.note}
+                  {selectedItem.description}
                 </p>
               )}
 
@@ -205,16 +203,14 @@ export const RescueModal: React.FC<RescueModalProps> = ({
               )}
             </div>
 
-            {/* Action Grid: What would you like to do? */}
             <div className="space-y-2">
               <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
                 Choose a rescue action:
               </span>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {/* Action 1: Revisit Now */}
                 <button
-                  onClick={() => handleAction('reviewed')}
+                  onClick={() => handleAction('revisit')}
                   className="p-3 text-left bg-white hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-300 rounded-xl transition-all group"
                 >
                   <div className="flex items-center justify-between text-indigo-600 font-semibold text-xs mb-1">
@@ -225,11 +221,10 @@ export const RescueModal: React.FC<RescueModalProps> = ({
                     <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Opens URL, updates last-reviewed to today, resets forgotten clock.
+                    Opens URL, updates review date, resets forgotten timer.
                   </p>
                 </button>
 
-                {/* Action 2: Mark Complete */}
                 <button
                   onClick={() => handleAction('complete')}
                   className="p-3 text-left bg-white hover:bg-emerald-50/50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all group"
@@ -242,11 +237,10 @@ export const RescueModal: React.FC<RescueModalProps> = ({
                     <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Cross it off your digital clutter list with celebration!
+                    Cross it off your digital queue with celebration!
                   </p>
                 </button>
 
-                {/* Action 3: Store as Reference */}
                 <button
                   onClick={() => handleAction('reference')}
                   className="p-3 text-left bg-white hover:bg-sky-50/50 border border-slate-200 hover:border-sky-300 rounded-xl transition-all group"
@@ -259,24 +253,39 @@ export const RescueModal: React.FC<RescueModalProps> = ({
                     <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Not immediate reading, but a valuable permanent resource.
+                    Move to REFERENCE Box as a permanent resource.
                   </p>
                 </button>
 
-                {/* Action 4: Delete / Let go */}
                 <button
-                  onClick={() => handleAction('deleted')}
-                  className="p-3 text-left bg-white hover:bg-rose-50/50 border border-slate-200 hover:border-rose-300 rounded-xl transition-all group"
+                  onClick={() => handleAction('archive')}
+                  className="p-3 text-left bg-white hover:bg-purple-50/50 border border-slate-200 hover:border-purple-300 rounded-xl transition-all group"
                 >
-                  <div className="flex items-center justify-between text-rose-600 font-semibold text-xs mb-1">
+                  <div className="flex items-center justify-between text-purple-600 font-semibold text-xs mb-1">
                     <span className="flex items-center gap-1.5">
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Let Go & Delete
+                      <Archive className="w-3.5 h-3.5" />
+                      Move to Archive
                     </span>
                     <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    If it no longer sparks interest, purge it to lighten clutter.
+                    Safely archive without permanently deleting.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => handleAction('delete')}
+                  className="p-3 text-left bg-white hover:bg-rose-50/50 border border-slate-200 hover:border-rose-300 rounded-xl transition-all group sm:col-span-2"
+                >
+                  <div className="flex items-center justify-between text-rose-600 font-semibold text-xs mb-1">
+                    <span className="flex items-center gap-1.5">
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Let Go & Delete Permanently
+                    </span>
+                    <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    If this no longer sparks interest, purge it to lighten your Clutter Score.
                   </p>
                 </button>
               </div>

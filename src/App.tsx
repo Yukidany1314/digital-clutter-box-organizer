@@ -4,35 +4,73 @@
  */
 
 import React, { useState } from 'react';
-import { ViewTab, ClutterItem } from './types';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { useClutterStore } from './hooks/useClutterStore';
-import { calculateClutterScore } from './utils/clutterScore';
+import { ClutterItem, ItemCategory } from './types';
 import { Sidebar } from './components/Sidebar';
 import { TopHeader } from './components/TopHeader';
 import { DashboardView } from './components/DashboardView';
 import { ItemsListView } from './components/ItemsListView';
 import { ForgottenTreasureView } from './components/ForgottenTreasureView';
+import { AIAssistantView } from './components/AIAssistantView';
 import { SettingsView } from './components/SettingsView';
 import { ItemModal } from './components/ItemModal';
 import { RescueModal } from './components/RescueModal';
 import { DeleteModal } from './components/DeleteModal';
 import { ToastContainer } from './components/Toast';
+import { LandingPage } from './pages/LandingPage';
+import { LoginPage } from './pages/LoginPage';
+import { SignupPage } from './pages/SignupPage';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { Loader2 } from 'lucide-react';
 
-export default function App() {
+/**
+ * Route protection wrapper
+ */
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FC] flex items-center justify-center text-slate-500">
+        <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+/**
+ * Main authenticated app container layout
+ */
+function AuthenticatedApp() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const {
     items,
     settings,
     toasts,
     forgottenItems,
+    clutterScoreData,
     removeToast,
     addItem,
     updateItem,
     deleteItem,
+    archiveItem,
+    restoreItem,
     toggleComplete,
     changeCategory,
+    markReviewed,
     visitItem,
-    markReviewedToday,
-    rescueForgottenItem,
+    rescueItem,
+    checkDuplicateUrl,
     resetToSample,
     clearAll,
     exportData,
@@ -40,28 +78,26 @@ export default function App() {
     updateSettings,
   } = useClutterStore();
 
-  const [currentTab, setCurrentTab] = useState<ViewTab>('dashboard');
   const [globalSearch, setGlobalSearch] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Modals state
+  // Modal States
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ClutterItem | null>(null);
   const [isRescueModalOpen, setIsRescueModalOpen] = useState(false);
   const [rescueItemTarget, setRescueItemTarget] = useState<ClutterItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ClutterItem | null>(null);
 
-  // Clutter Score
-  const scoreData = calculateClutterScore(items, settings.forgottenThresholdDays);
-
-  // Counts for sidebar badges
+  // Counts for sidebar
+  const unarchived = items.filter((i) => !i.is_archived);
   const counts = {
-    all: items.filter((i) => !i.isCompleted).length,
-    read: items.filter((i) => i.category === 'READ' && !i.isCompleted).length,
-    do: items.filter((i) => i.category === 'DO' && !i.isCompleted).length,
-    reference: items.filter((i) => i.category === 'REFERENCE' && !i.isCompleted).length,
+    all: unarchived.filter((i) => !i.is_completed).length,
+    read: unarchived.filter((i) => i.category === 'read' && !i.is_completed).length,
+    do: unarchived.filter((i) => i.category === 'do' && !i.is_completed).length,
+    reference: unarchived.filter((i) => i.category === 'reference' && !i.is_completed).length,
     forgotten: forgottenItems.length,
-    completed: items.filter((i) => i.isCompleted).length,
+    completed: unarchived.filter((i) => i.is_completed).length,
+    archived: items.filter((i) => i.is_archived).length,
   };
 
   const handleOpenAddModal = () => {
@@ -81,112 +117,234 @@ export default function App() {
 
   const handleDeletePrompt = (id: string) => {
     const target = items.find((i) => i.id === id);
-    if (target) {
-      setDeleteTarget(target);
-    }
+    if (target) setDeleteTarget(target);
   };
 
   return (
     <div className="min-h-screen bg-[#F8F9FC] text-slate-900 flex font-sans antialiased">
       {/* Sidebar Navigation */}
       <Sidebar
-        currentTab={currentTab}
-        onSelectTab={(tab) => {
-          setCurrentTab(tab);
-          // if user had a search query and navigates tabs, retain or allow searching in that tab
-        }}
         counts={counts}
-        clutterScore={scoreData}
+        clutterScore={clutterScoreData}
         onOpenRescueModal={() => handleOpenRescueModal()}
         isOpenMobile={isMobileMenuOpen}
         onCloseMobile={() => setIsMobileMenuOpen(false)}
       />
 
-      {/* Main Content Area */}
+      {/* Main View Area */}
       <div className="flex-1 flex flex-col min-w-0 lg:pl-72">
-        {/* Top Header */}
         <TopHeader
-          currentTab={currentTab}
           searchQuery={globalSearch}
-          onSearchChange={(q) => {
-            setGlobalSearch(q);
-            if (q.trim() && currentTab === 'dashboard') {
-              setCurrentTab('all');
-            }
-          }}
+          onSearchChange={setGlobalSearch}
           onOpenAddModal={handleOpenAddModal}
           onOpenRescueModal={() => handleOpenRescueModal()}
           onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
           forgottenCount={forgottenItems.length}
         />
 
-        {/* View Router */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
-          {currentTab === 'dashboard' && (
-            <DashboardView
-              items={items}
-              clutterScore={scoreData}
-              forgottenItems={forgottenItems}
-              thresholdDays={settings.forgottenThresholdDays}
-              onNavigateTab={(tab) => setCurrentTab(tab)}
-              onOpenAddModal={handleOpenAddModal}
-              onOpenRescueModal={handleOpenRescueModal}
-              onToggleComplete={toggleComplete}
-              onVisit={visitItem}
-              onMarkReviewed={markReviewedToday}
-              onChangeCategory={changeCategory}
-              onEdit={handleEditItem}
-              onDelete={handleDeletePrompt}
+          <Routes>
+            <Route
+              path=""
+              element={
+                <DashboardView
+                  items={items}
+                  clutterScore={clutterScoreData}
+                  forgottenItems={forgottenItems}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  onOpenAddModal={handleOpenAddModal}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
             />
-          )}
 
-          {currentTab === 'forgotten' && (
-            <ForgottenTreasureView
-              forgottenItems={forgottenItems}
-              thresholdDays={settings.forgottenThresholdDays}
-              onOpenRescueModal={handleOpenRescueModal}
-              onToggleComplete={toggleComplete}
-              onVisit={visitItem}
-              onMarkReviewed={markReviewedToday}
-              onChangeCategory={changeCategory}
-              onEdit={handleEditItem}
-              onDelete={handleDeletePrompt}
+            <Route
+              path="items"
+              element={
+                <ItemsListView
+                  viewMode="all"
+                  items={items}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  initialSearch={globalSearch}
+                  onOpenAddModal={handleOpenAddModal}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onRestore={restoreItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
             />
-          )}
 
-          {(currentTab === 'all' ||
-            currentTab === 'read' ||
-            currentTab === 'do' ||
-            currentTab === 'reference' ||
-            currentTab === 'completed') && (
-            <ItemsListView
-              key={currentTab}
-              currentTab={currentTab}
-              items={items}
-              thresholdDays={settings.forgottenThresholdDays}
-              initialSearch={globalSearch}
-              onOpenAddModal={handleOpenAddModal}
-              onOpenRescueModal={handleOpenRescueModal}
-              onToggleComplete={toggleComplete}
-              onVisit={visitItem}
-              onMarkReviewed={markReviewedToday}
-              onChangeCategory={changeCategory}
-              onEdit={handleEditItem}
-              onDelete={handleDeletePrompt}
+            <Route
+              path="read"
+              element={
+                <ItemsListView
+                  viewMode="read"
+                  items={items}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  initialSearch={globalSearch}
+                  onOpenAddModal={handleOpenAddModal}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onRestore={restoreItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
             />
-          )}
 
-          {currentTab === 'settings' && (
-            <SettingsView
-              settings={settings}
-              onUpdateSettings={updateSettings}
-              onResetSample={resetToSample}
-              onClearAll={clearAll}
-              onExport={exportData}
-              onImport={importData}
-              totalItems={items.length}
+            <Route
+              path="do"
+              element={
+                <ItemsListView
+                  viewMode="do"
+                  items={items}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  initialSearch={globalSearch}
+                  onOpenAddModal={handleOpenAddModal}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onRestore={restoreItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
             />
-          )}
+
+            <Route
+              path="reference"
+              element={
+                <ItemsListView
+                  viewMode="reference"
+                  items={items}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  initialSearch={globalSearch}
+                  onOpenAddModal={handleOpenAddModal}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onRestore={restoreItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
+            />
+
+            <Route
+              path="forgotten"
+              element={
+                <ForgottenTreasureView
+                  forgottenItems={forgottenItems}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
+            />
+
+            <Route
+              path="completed"
+              element={
+                <ItemsListView
+                  viewMode="completed"
+                  items={items}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  initialSearch={globalSearch}
+                  onOpenAddModal={handleOpenAddModal}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onRestore={restoreItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
+            />
+
+            <Route
+              path="archived"
+              element={
+                <ItemsListView
+                  viewMode="archived"
+                  items={items}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  initialSearch={globalSearch}
+                  onOpenAddModal={handleOpenAddModal}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onToggleComplete={toggleComplete}
+                  onVisit={visitItem}
+                  onMarkReviewed={markReviewed}
+                  onChangeCategory={changeCategory}
+                  onArchive={archiveItem}
+                  onRestore={restoreItem}
+                  onEdit={handleEditItem}
+                  onDelete={handleDeletePrompt}
+                />
+              }
+            />
+
+            <Route
+              path="assistant"
+              element={
+                <AIAssistantView
+                  items={items}
+                  clutterScore={clutterScoreData}
+                  thresholdDays={settings.forgottenThresholdDays}
+                  onOpenRescueModal={handleOpenRescueModal}
+                  onNavigateTab={(tab) => navigate(`/app/${tab}`)}
+                />
+              }
+            />
+
+            <Route
+              path="settings"
+              element={
+                <SettingsView
+                  settings={settings}
+                  onUpdateSettings={updateSettings}
+                  onResetSample={resetToSample}
+                  onClearAll={clearAll}
+                  onExport={exportData}
+                  onImport={importData}
+                  totalItems={items.length}
+                />
+              }
+            />
+
+            <Route path="*" element={<Navigate to="/app" replace />} />
+          </Routes>
         </main>
       </div>
 
@@ -198,6 +356,7 @@ export default function App() {
           setIsAddModalOpen(false);
           setEditingItem(null);
         }}
+        onCheckDuplicateUrl={checkDuplicateUrl}
         onSubmit={(data) => {
           if (editingItem) {
             updateItem(editingItem.id, data);
@@ -207,7 +366,7 @@ export default function App() {
         }}
       />
 
-      {/* Signature Feature: Rescue an Item Modal */}
+      {/* Signature Feature: Rescue Modal */}
       <RescueModal
         isOpen={isRescueModalOpen}
         onClose={() => {
@@ -217,7 +376,7 @@ export default function App() {
         forgottenItems={forgottenItems}
         thresholdDays={settings.forgottenThresholdDays}
         initialItem={rescueItemTarget}
-        onRescueAction={rescueForgottenItem}
+        onRescueAction={rescueItem}
       />
 
       {/* Delete Confirmation Modal */}
@@ -233,8 +392,32 @@ export default function App() {
         }}
       />
 
-      {/* Toast Notification Container */}
+      {/* Toasts */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route
+            path="/app/*"
+            element={
+              <ProtectedRoute>
+                <AuthenticatedApp />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }

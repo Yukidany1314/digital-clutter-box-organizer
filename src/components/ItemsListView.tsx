@@ -8,19 +8,18 @@ import {
   BookOpen,
   CheckSquare,
   Bookmark,
-  Sparkles,
   Layers,
   CheckCircle2,
-  Globe,
-  Video,
-  FileText,
+  Archive,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
-import { ClutterItem, ItemCategory, ItemType, SortOption, ViewTab } from '../types';
+import { ClutterItem, ItemCategory, ContentType } from '../types';
 import { calculateDaysSince, isItemForgotten } from '../utils/clutterScore';
 import { ItemCard } from './ItemCard';
 
 interface ItemsListViewProps {
-  currentTab: ViewTab;
+  viewMode: 'all' | 'read' | 'do' | 'reference' | 'completed' | 'archived';
   items: ClutterItem[];
   thresholdDays: number;
   initialSearch?: string;
@@ -30,12 +29,14 @@ interface ItemsListViewProps {
   onVisit: (id: string) => void;
   onMarkReviewed: (id: string) => void;
   onChangeCategory: (id: string, category: ItemCategory) => void;
+  onArchive: (id: string) => void;
+  onRestore: (id: string) => void;
   onEdit: (item: ClutterItem) => void;
   onDelete: (id: string) => void;
 }
 
 export const ItemsListView: React.FC<ItemsListViewProps> = ({
-  currentTab,
+  viewMode,
   items,
   thresholdDays,
   initialSearch = '',
@@ -45,85 +46,132 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
   onVisit,
   onMarkReviewed,
   onChangeCategory,
+  onArchive,
+  onRestore,
   onEdit,
   onDelete,
 }) => {
   const [search, setSearch] = useState(initialSearch);
-  const [selectedType, setSelectedType] = useState<'ALL' | ItemType>('ALL');
+  const [selectedType, setSelectedType] = useState<'ALL' | ContentType>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'ACTIVE' | 'FORGOTTEN' | 'COMPLETED'>('ALL');
-  const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'most_forgotten' | 'alphabetical'>('newest');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 12;
 
-  // Category context based on current tab
-  const tabCategoryFilter = useMemo((): ItemCategory | 'ALL' => {
-    if (currentTab === 'read') return 'READ';
-    if (currentTab === 'do') return 'DO';
-    if (currentTab === 'reference') return 'REFERENCE';
-    return 'ALL';
-  }, [currentTab]);
+  // Header info based on view mode
+  const getHeaderInfo = () => {
+    switch (viewMode) {
+      case 'read':
+        return {
+          title: 'READ Box',
+          subtitle: 'Articles, blogs, guides, and tutorials queued for reading.',
+          icon: BookOpen,
+          color: 'text-indigo-600',
+        };
+      case 'do':
+        return {
+          title: 'DO Box',
+          subtitle: 'Actionable tasks, coding exercises, and portfolio milestones requiring focus.',
+          icon: CheckSquare,
+          color: 'text-emerald-600',
+        };
+      case 'reference':
+        return {
+          title: 'REFERENCE Box',
+          subtitle: 'Cheat sheets, documentation, code patterns, and durable resources.',
+          icon: Bookmark,
+          color: 'text-sky-600',
+        };
+      case 'completed':
+        return {
+          title: 'Completed Items',
+          subtitle: 'Articles finished, tasks achieved, and clutter conquered.',
+          icon: CheckCircle2,
+          color: 'text-slate-700',
+        };
+      case 'archived':
+        return {
+          title: 'Archived Items',
+          subtitle: 'Preserved records excluded from active clutter scores.',
+          icon: Archive,
+          color: 'text-purple-600',
+        };
+      case 'all':
+      default:
+        return {
+          title: 'All Saved Items',
+          subtitle: 'Full repository across all Smart Boxes with search & multi-filters.',
+          icon: Layers,
+          color: 'text-slate-800',
+        };
+    }
+  };
 
-  const isCompletedTab = currentTab === 'completed';
+  const headerInfo = getHeaderInfo();
+  const HeaderIcon = headerInfo.icon;
 
   // Filter items
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      // Archive isolation
+      if (viewMode === 'archived') {
+        if (!item.is_archived) return false;
+      } else {
+        if (item.is_archived) return false;
+      }
+
       // Completed tab restriction
-      if (isCompletedTab && !item.isCompleted) return false;
-      if (!isCompletedTab && currentTab !== 'all' && item.isCompleted && selectedStatus !== 'COMPLETED') {
-        // If not on all or completed tab, by default hide completed unless explicitly filtered
+      if (viewMode === 'completed' && !item.is_completed) return false;
+      if (viewMode !== 'all' && viewMode !== 'completed' && viewMode !== 'archived' && item.is_completed && selectedStatus !== 'COMPLETED') {
         return false;
       }
 
-      // Tab category filter
-      if (tabCategoryFilter !== 'ALL' && item.category !== tabCategoryFilter) {
-        return false;
-      }
+      // Box category
+      if (viewMode === 'read' && item.category !== 'read') return false;
+      if (viewMode === 'do' && item.category !== 'do') return false;
+      if (viewMode === 'reference' && item.category !== 'reference') return false;
 
       // Type filter
-      if (selectedType !== 'ALL' && item.type !== selectedType) {
-        return false;
-      }
+      if (selectedType !== 'ALL' && item.content_type !== selectedType) return false;
 
       // Status filter
-      if (selectedStatus === 'ACTIVE' && item.isCompleted) return false;
-      if (selectedStatus === 'COMPLETED' && !item.isCompleted) return false;
+      if (selectedStatus === 'ACTIVE' && item.is_completed) return false;
+      if (selectedStatus === 'COMPLETED' && !item.is_completed) return false;
       if (selectedStatus === 'FORGOTTEN' && !isItemForgotten(item, thresholdDays)) return false;
 
       // Text search
       if (search.trim()) {
-        const query = search.toLowerCase();
-        const matchTitle = item.title.toLowerCase().includes(query);
-        const matchUrl = item.url?.toLowerCase().includes(query) || false;
-        const matchNote = item.note?.toLowerCase().includes(query) || false;
-        const matchTags = item.tags.some((t) => t.toLowerCase().includes(query));
-        if (!matchTitle && !matchUrl && !matchNote && !matchTags) return false;
+        const q = search.toLowerCase();
+        const matchTitle = item.title.toLowerCase().includes(q);
+        const matchUrl = item.url?.toLowerCase().includes(q) || false;
+        const matchDesc = item.description?.toLowerCase().includes(q) || false;
+        const matchTags = item.tags.some((t) => t.toLowerCase().includes(q));
+        if (!matchTitle && !matchUrl && !matchDesc && !matchTags) return false;
       }
 
       return true;
     });
-  }, [items, currentTab, isCompletedTab, tabCategoryFilter, selectedType, selectedStatus, search, thresholdDays]);
+  }, [items, viewMode, selectedType, selectedStatus, search, thresholdDays]);
 
   // Sort items
   const sortedItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
-      if (sortBy === 'newest') {
-        return Date.parse(b.createdAt) - Date.parse(a.createdAt);
-      }
-      if (sortBy === 'oldest') {
-        return Date.parse(a.createdAt) - Date.parse(b.createdAt);
-      }
+      if (sortBy === 'newest') return Date.parse(b.created_at) - Date.parse(a.created_at);
+      if (sortBy === 'oldest') return Date.parse(a.created_at) - Date.parse(b.created_at);
       if (sortBy === 'most_forgotten') {
-        const waitA = calculateDaysSince(a.lastReviewedAt);
-        const waitB = calculateDaysSince(b.lastReviewedAt);
+        const waitA = calculateDaysSince(a.last_reviewed_at || a.created_at);
+        const waitB = calculateDaysSince(b.last_reviewed_at || b.created_at);
         return waitB - waitA;
       }
-      if (sortBy === 'alphabetical') {
-        return a.title.localeCompare(b.title);
-      }
+      if (sortBy === 'alphabetical') return a.title.localeCompare(b.title);
       return 0;
     });
   }, [filteredItems, sortBy]);
 
-  // Has active filters?
+  // Pagination
+  const totalPages = Math.ceil(sortedItems.length / pageSize) || 1;
+  const paginatedItems = sortedItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   const hasActiveFilters =
     search.trim() !== '' ||
     selectedType !== 'ALL' ||
@@ -135,56 +183,12 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
     setSelectedType('ALL');
     setSelectedStatus('ALL');
     setSortBy('newest');
+    setCurrentPage(1);
   };
-
-  // Header copy helper
-  const getHeaderInfo = () => {
-    switch (currentTab) {
-      case 'read':
-        return {
-          title: 'READ Box',
-          subtitle: 'Articles, blogs, guides, and tutorials queued for reading.',
-          icon: BookOpen,
-          color: 'text-indigo-600',
-        };
-      case 'do':
-        return {
-          title: 'DO Box',
-          subtitle: 'Actionable tasks, coding ideas, and portfolio milestones requiring focus.',
-          icon: CheckSquare,
-          color: 'text-emerald-600',
-        };
-      case 'reference':
-        return {
-          title: 'REFERENCE Box',
-          subtitle: 'Cheat sheets, documentations, code patterns, and durable resources.',
-          icon: Bookmark,
-          color: 'text-sky-600',
-        };
-      case 'completed':
-        return {
-          title: 'Completed Items',
-          subtitle: 'Articles finished, tasks achieved, and clutter conquered.',
-          icon: CheckCircle2,
-          color: 'text-slate-700',
-        };
-      case 'all':
-      default:
-        return {
-          title: 'All Saved Items',
-          subtitle: 'Full repository across all Smart Boxes with live search & multi-filters.',
-          icon: Layers,
-          color: 'text-slate-800',
-        };
-    }
-  };
-
-  const headerInfo = getHeaderInfo();
-  const HeaderIcon = headerInfo.icon;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* View Title Banner */}
+      {/* Title Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-white border border-slate-200/80 flex items-center justify-center text-slate-700 shadow-xs">
@@ -198,13 +202,15 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onOpenAddModal}
-          className="self-start sm:self-auto px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-98 rounded-xl shadow-xs transition-all flex items-center gap-1.5"
-        >
-          <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>Add Item</span>
-        </button>
+        {viewMode !== 'archived' && (
+          <button
+            onClick={onOpenAddModal}
+            className="self-start sm:self-auto px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-98 rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>Add Item</span>
+          </button>
+        )}
       </div>
 
       {/* Filter and Control Bar */}
@@ -216,9 +222,12 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setCurrentPage(1);
+              }}
               placeholder="Search by title, url, notes, or tags..."
-              className="w-full pl-9 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 placeholder:text-slate-400"
+              className="w-full pl-9 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800 placeholder:text-slate-400"
             />
             {search && (
               <button
@@ -236,7 +245,7 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
             <span className="text-xs text-slate-500 font-medium">Sort:</span>
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              onChange={(e) => setSortBy(e.target.value as any)}
               className="text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-2.5 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20"
             >
               <option value="newest">Newest First</option>
@@ -251,7 +260,7 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
                 className="text-xs text-rose-600 hover:text-rose-800 font-medium px-2 py-1 rounded-lg hover:bg-rose-50 transition-colors flex items-center gap-1"
               >
                 <X className="w-3.5 h-3.5" />
-                <span>Clear Filters</span>
+                <span>Reset</span>
               </button>
             )}
           </div>
@@ -259,18 +268,23 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
 
         {/* Filter Badges Row */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 text-xs">
-          {/* Type Segmented Buttons */}
+          {/* Content Type Filter */}
           <div className="flex items-center gap-1 overflow-x-auto p-1 bg-slate-100 rounded-xl">
             {[
               { id: 'ALL', label: 'All Types' },
-              { id: 'link', label: 'Links' },
               { id: 'article', label: 'Articles' },
               { id: 'video', label: 'Videos' },
+              { id: 'task', label: 'Tasks' },
               { id: 'note', label: 'Notes' },
+              { id: 'document', label: 'Docs' },
+              { id: 'link', label: 'Links' },
             ].map((t) => (
               <button
                 key={t.id}
-                onClick={() => setSelectedType(t.id as any)}
+                onClick={() => {
+                  setSelectedType(t.id as any);
+                  setCurrentPage(1);
+                }}
                 className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
                   selectedType === t.id
                     ? 'bg-white text-slate-900 shadow-xs font-semibold'
@@ -282,8 +296,8 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
             ))}
           </div>
 
-          {/* Status Filter (if not on completed view) */}
-          {!isCompletedTab && (
+          {/* Status Filter */}
+          {viewMode !== 'completed' && viewMode !== 'archived' && (
             <div className="flex items-center gap-1 overflow-x-auto p-1 bg-slate-100 rounded-xl">
               {[
                 { id: 'ALL', label: 'All Status' },
@@ -293,7 +307,10 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
               ].map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => setSelectedStatus(s.id as any)}
+                  onClick={() => {
+                    setSelectedStatus(s.id as any);
+                    setCurrentPage(1);
+                  }}
                   className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
                     selectedStatus === s.id
                       ? 'bg-white text-slate-900 shadow-xs font-semibold'
@@ -313,9 +330,9 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
       </div>
 
       {/* Item Cards Grid */}
-      {sortedItems.length > 0 ? (
+      {paginatedItems.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {sortedItems.map((item) => (
+          {paginatedItems.map((item) => (
             <ItemCard
               key={item.id}
               item={item}
@@ -324,6 +341,8 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
               onVisit={onVisit}
               onMarkReviewed={onMarkReviewed}
               onChangeCategory={onChangeCategory}
+              onArchive={onArchive}
+              onRestore={onRestore}
               onEdit={onEdit}
               onDelete={onDelete}
               onRescueSingle={() => onOpenRescueModal(item)}
@@ -331,7 +350,6 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
           ))}
         </div>
       ) : (
-        /* Empty State */
         <div className="bg-white rounded-3xl border border-slate-200/80 p-12 text-center max-w-md mx-auto my-8">
           <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-3">
             <Layers className="w-6 h-6" />
@@ -341,8 +359,8 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
           </h3>
           <p className="text-xs text-slate-500 leading-relaxed mb-5">
             {hasActiveFilters
-              ? 'Try relaxing your search terms or clearing current filter selections.'
-              : `You haven't saved any items in this box yet. Click below to add one!`}
+              ? 'Try relaxing your search terms or clearing your filter selections.'
+              : `You haven't saved any items in this view yet.`}
           </p>
 
           <div className="flex items-center justify-center gap-2.5">
@@ -353,7 +371,7 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
               >
                 Reset Filters
               </button>
-            ) : (
+            ) : viewMode !== 'archived' && (
               <button
                 onClick={onOpenAddModal}
                 className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors flex items-center gap-1.5"
@@ -362,6 +380,35 @@ export const ItemsListView: React.FC<ItemsListViewProps> = ({
                 <span>Save First Item</span>
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-4 border-t border-slate-200/80 text-xs">
+          <span className="text-slate-500 font-mono">
+            Page {currentPage} of {totalPages}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className={`p-2 rounded-xl border border-slate-200 ${
+                currentPage === 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'
+              }`}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className={`p-2 rounded-xl border border-slate-200 ${
+                currentPage === totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'
+              }`}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}

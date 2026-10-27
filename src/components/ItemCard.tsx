@@ -13,10 +13,11 @@ import {
   Globe,
   BookOpen,
   ArrowRightLeft,
-  Calendar,
+  Archive,
+  RefreshCw,
   Eye,
 } from 'lucide-react';
-import { ClutterItem, ItemCategory } from '../types';
+import { ClutterItem, ItemCategory, ContentType } from '../types';
 import { calculateDaysSince, isItemForgotten } from '../utils/clutterScore';
 
 interface ItemCardProps {
@@ -26,6 +27,8 @@ interface ItemCardProps {
   onVisit: (id: string) => void;
   onMarkReviewed: (id: string) => void;
   onChangeCategory: (id: string, category: ItemCategory) => void;
+  onArchive?: (id: string) => void;
+  onRestore?: (id: string) => void;
   onEdit: (item: ClutterItem) => void;
   onDelete: (id: string) => void;
   onRescueSingle?: (item: ClutterItem) => void;
@@ -38,24 +41,28 @@ export const ItemCard: React.FC<ItemCardProps> = ({
   onVisit,
   onMarkReviewed,
   onChangeCategory,
+  onArchive,
+  onRestore,
   onEdit,
   onDelete,
   onRescueSingle,
 }) => {
   const [showMenu, setShowMenu] = useState(false);
   const forgotten = isItemForgotten(item, thresholdDays);
-  const daysWaiting = calculateDaysSince(item.lastReviewedAt);
-  const daysSinceCreated = calculateDaysSince(item.createdAt);
+  const reviewDate = item.last_reviewed_at || item.created_at;
+  const daysWaiting = calculateDaysSince(reviewDate);
+  const daysSinceCreated = calculateDaysSince(item.created_at);
 
-  // Type Icon
   const renderTypeIcon = () => {
-    switch (item.type) {
+    switch (item.content_type) {
       case 'video':
         return <Video className="w-3.5 h-3.5 text-rose-500" />;
       case 'article':
         return <BookOpen className="w-3.5 h-3.5 text-indigo-500" />;
       case 'note':
         return <FileText className="w-3.5 h-3.5 text-emerald-500" />;
+      case 'task':
+        return <CheckCircle2 className="w-3.5 h-3.5 text-amber-500" />;
       case 'link':
       default:
         return <Globe className="w-3.5 h-3.5 text-blue-500" />;
@@ -64,12 +71,12 @@ export const ItemCard: React.FC<ItemCardProps> = ({
 
   const getCategoryLabel = (cat: ItemCategory) => {
     switch (cat) {
-      case 'READ':
-        return 'Read Box';
-      case 'DO':
-        return 'Do Box';
-      case 'REFERENCE':
-        return 'Reference Box';
+      case 'read':
+        return 'READ Box';
+      case 'do':
+        return 'DO Box';
+      case 'reference':
+        return 'REFERENCE Box';
     }
   };
 
@@ -86,28 +93,29 @@ export const ItemCard: React.FC<ItemCardProps> = ({
   return (
     <div
       className={`group relative bg-white rounded-2xl border transition-all duration-200 p-5 ${
-        item.isCompleted
+        item.is_archived
+          ? 'border-slate-200/60 bg-slate-50/50 opacity-60'
+          : item.is_completed
           ? 'border-slate-200/60 bg-slate-50/40 opacity-75'
           : forgotten
           ? 'border-amber-200/90 shadow-xs shadow-amber-500/5 hover:border-amber-300'
           : 'border-slate-200/80 shadow-xs hover:border-indigo-200 hover:shadow-md'
       }`}
     >
-      {/* Top Header: Unboxed Metadata & Category switcher */}
+      {/* Top Header: Unboxed Metadata */}
       <div className="flex items-start justify-between gap-3 mb-2.5">
-        {/* Unboxed metadata line with typographic bullet separators */}
         <div className="flex items-center flex-wrap gap-2 text-xs text-slate-500 font-medium">
           <span className="flex items-center gap-1.5 text-slate-700">
             {renderTypeIcon()}
-            <span className="capitalize">{item.type}</span>
+            <span className="capitalize">{item.content_type}</span>
           </span>
 
           <span aria-hidden="true" className="text-slate-300">·</span>
 
           <span className={`font-semibold ${
-            item.category === 'READ'
+            item.category === 'read'
               ? 'text-indigo-600'
-              : item.category === 'DO'
+              : item.category === 'do'
               ? 'text-emerald-600'
               : 'text-sky-600'
           }`}>
@@ -124,17 +132,17 @@ export const ItemCard: React.FC<ItemCardProps> = ({
             </>
           )}
 
-          {item.isSample && (
+          {item.is_archived && (
             <>
               <span aria-hidden="true" className="text-slate-300">·</span>
-              <span className="text-[11px] text-slate-400 font-mono">Sample</span>
+              <span className="text-slate-400 font-mono text-[11px]">Archived</span>
             </>
           )}
         </div>
 
-        {/* Action controls */}
+        {/* Action Controls */}
         <div className="relative shrink-0 flex items-center gap-1">
-          {forgotten && onRescueSingle && !item.isCompleted && (
+          {forgotten && onRescueSingle && !item.is_completed && !item.is_archived && (
             <button
               onClick={() => onRescueSingle(item)}
               title="Rescue this forgotten treasure"
@@ -156,10 +164,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({
           {/* Context Dropdown Menu */}
           {showMenu && (
             <>
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setShowMenu(false)}
-              />
+              <div className="fixed inset-0 z-30" onClick={() => setShowMenu(false)} />
               <div className="absolute right-0 top-8 z-40 w-48 bg-white border border-slate-200 rounded-xl shadow-xl py-1 text-xs">
                 <button
                   onClick={() => {
@@ -183,11 +188,39 @@ export const ItemCard: React.FC<ItemCardProps> = ({
                   Mark Reviewed Today
                 </button>
 
+                {item.is_archived ? (
+                  onRestore && (
+                    <button
+                      onClick={() => {
+                        onRestore(item.id);
+                        setShowMenu(false);
+                      }}
+                      className="w-full px-3 py-2 text-left text-indigo-600 hover:bg-indigo-50 flex items-center gap-2"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-indigo-500" />
+                      Restore Item
+                    </button>
+                  )
+                ) : (
+                  onArchive && (
+                    <button
+                      onClick={() => {
+                        onArchive(item.id);
+                        setShowMenu(false);
+                      }}
+                      className="w-full px-3 py-2 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                    >
+                      <Archive className="w-3.5 h-3.5 text-slate-400" />
+                      Archive Item
+                    </button>
+                  )
+                )}
+
                 <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider border-t border-slate-100 mt-1">
                   Move Box
                 </div>
 
-                {(['READ', 'DO', 'REFERENCE'] as ItemCategory[]).map((cat) => (
+                {(['read', 'do', 'reference'] as ItemCategory[]).map((cat) => (
                   <button
                     key={cat}
                     disabled={item.category === cat}
@@ -215,7 +248,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({
                     className="w-full px-3 py-2 text-left text-rose-600 hover:bg-rose-50 flex items-center gap-2"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                    Delete Item
+                    Delete Permanently
                   </button>
                 </div>
               </div>
@@ -226,31 +259,28 @@ export const ItemCard: React.FC<ItemCardProps> = ({
 
       {/* Main Content Area */}
       <div className="flex items-start gap-3">
-        {/* Toggle complete button */}
         <button
           onClick={() => onToggleComplete(item.id)}
           className="mt-0.5 shrink-0 text-slate-400 hover:text-indigo-600 transition-colors"
-          title={item.isCompleted ? 'Mark uncompleted' : 'Mark completed'}
-          aria-label={item.isCompleted ? 'Mark uncompleted' : 'Mark completed'}
+          title={item.is_completed ? 'Mark uncompleted' : 'Mark completed'}
+          aria-label={item.is_completed ? 'Mark uncompleted' : 'Mark completed'}
         >
-          {item.isCompleted ? (
+          {item.is_completed ? (
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
           ) : (
             <Circle className="w-5 h-5 hover:text-indigo-600 text-slate-300 stroke-[1.8]" />
           )}
         </button>
 
-        {/* Title & Body */}
         <div className="flex-1 min-w-0">
           <h3
             className={`text-sm font-semibold text-slate-900 leading-snug break-words ${
-              item.isCompleted ? 'line-through text-slate-400' : ''
+              item.is_completed ? 'line-through text-slate-400' : ''
             }`}
           >
             {item.title}
           </h3>
 
-          {/* URL domain link */}
           {item.url && (
             <div className="mt-1">
               <button
@@ -264,14 +294,12 @@ export const ItemCard: React.FC<ItemCardProps> = ({
             </div>
           )}
 
-          {/* Note excerpt */}
-          {item.note && (
+          {item.description && (
             <p className="mt-2 text-xs text-slate-600 leading-relaxed whitespace-pre-line line-clamp-3 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
-              {item.note}
+              {item.description}
             </p>
           )}
 
-          {/* Tags (clean subtle text) */}
           {item.tags && item.tags.length > 0 && (
             <div className="mt-3 flex items-center flex-wrap gap-1.5">
               {item.tags.map((t) => (
@@ -287,7 +315,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({
         </div>
       </div>
 
-      {/* Footer Info & Quick Actions */}
+      {/* Footer Info */}
       <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px] text-slate-400">
         <div className="flex items-center gap-2">
           <span>Added {daysSinceCreated === 0 ? 'today' : `${daysSinceCreated}d ago`}</span>
@@ -303,7 +331,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({
               onClick={() => onVisit(item.id)}
               className="text-xs font-medium text-slate-600 hover:text-indigo-600 flex items-center gap-1 transition-colors"
             >
-              <span>Visit Link</span>
+              <span>Visit</span>
               <ExternalLink className="w-3 h-3" />
             </button>
           ) : (
@@ -311,7 +339,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({
               onClick={() => onMarkReviewed(item.id)}
               className="text-xs font-medium text-slate-600 hover:text-indigo-600 flex items-center gap-1 transition-colors"
             >
-              <span>Touch / Review</span>
+              <span>Review Now</span>
             </button>
           )}
         </div>

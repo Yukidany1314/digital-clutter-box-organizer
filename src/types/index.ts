@@ -1,44 +1,42 @@
-export type ItemCategory = 'READ' | 'DO' | 'REFERENCE';
+export type ItemCategory = 'read' | 'do' | 'reference';
 
-export type ItemType = 'link' | 'article' | 'video' | 'note';
+export type ContentType =
+  | 'link'
+  | 'article'
+  | 'video'
+  | 'note'
+  | 'task'
+  | 'document'
+  | 'idea'
+  | 'other';
 
 export interface ClutterItem {
   id: string;
+  user_id?: string;
   title: string;
-  type: ItemType;
-  category: ItemCategory;
   url?: string;
-  note?: string;
+  description?: string;
+  category: ItemCategory;
+  content_type: ContentType;
   tags: string[];
-  createdAt: string; // ISO string
-  lastReviewedAt: string; // ISO string
-  isCompleted: boolean;
-  completedAt?: string; // ISO string
-  isSample?: boolean;
-  estimatedMinutes?: number;
+  is_completed: boolean;
+  completed_at?: string;
+  is_archived: boolean;
+  archived_at?: string;
+  created_at: string;
+  updated_at: string;
+  last_reviewed_at?: string;
+  is_sample?: boolean;
 }
 
-export type ViewTab =
-  | 'dashboard'
-  | 'all'
-  | 'read'
-  | 'do'
-  | 'reference'
-  | 'forgotten'
-  | 'completed'
-  | 'settings';
-
-export type SortOption = 'newest' | 'oldest' | 'most_forgotten' | 'alphabetical';
-
-export interface FilterState {
-  search: string;
-  category: 'ALL' | ItemCategory;
-  type: 'ALL' | ItemType;
-  sortBy: SortOption;
-  onlyForgotten: boolean;
+export interface UserProfile {
+  id: string;
+  email: string;
+  displayName: string;
+  createdAt: string;
 }
 
-export interface AppSettings {
+export interface UserSettings {
   forgottenThresholdDays: number;
   enableConfetti: boolean;
   compactView: boolean;
@@ -46,17 +44,41 @@ export interface AppSettings {
 
 export interface ClutterScoreData {
   score: number;
-  label: string;
+  label: 'Well Organized' | 'Light Clutter' | 'Needs Attention' | 'High Clutter';
   description: string;
   colorClass: string;
   bgLightClass: string;
   borderClass: string;
   totalItems: number;
   activeItems: number;
+  attentionItems: number;
   forgottenItems: number;
   completedItems: number;
-  activeRate: number;
-  forgottenRate: number;
+  archivedItems: number;
+  suggestedAction: string;
+}
+
+export interface AICategorizationResult {
+  category: ItemCategory;
+  contentType: ContentType;
+  summary: string;
+  tags: string[];
+  reason: string;
+  nextAction?: string | null;
+}
+
+export interface AIAssistantRecommendation {
+  headline: string;
+  observations: Array<{
+    message: string;
+    evidence: string;
+    action: string;
+  }>;
+  suggestedActions: Array<{
+    title: string;
+    description: string;
+    priority: 'low' | 'medium' | 'high';
+  }>;
 }
 
 export interface ToastMessage {

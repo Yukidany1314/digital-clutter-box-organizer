@@ -1,23 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
-import { ClutterItem, ItemCategory, AppSettings, ToastMessage } from '../types';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { ClutterItem, ItemCategory, ContentType, UserSettings, ToastMessage } from '../types';
 import { INITIAL_SAMPLE_ITEMS } from '../utils/sampleData';
-import { isItemForgotten } from '../utils/clutterScore';
+import { isItemForgotten, calculateDaysSince, calculateClutterScore } from '../utils/clutterScore';
 import { fireRescueConfetti, fireCompleteConfetti } from '../utils/confetti';
+import { useAuth } from '../context/AuthContext';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-const STORAGE_ITEMS_KEY = 'clutterbox_items_v2';
-const STORAGE_SETTINGS_KEY = 'clutterbox_settings_v2';
+const STORAGE_ITEMS_PREFIX = 'clutterbox_items_v3_';
+const STORAGE_SETTINGS_PREFIX = 'clutterbox_settings_v3_';
 
-const DEFAULT_SETTINGS: AppSettings = {
+const DEFAULT_SETTINGS: UserSettings = {
   forgottenThresholdDays: 14,
   enableConfetti: true,
   compactView: false,
 };
 
 export function useClutterStore() {
-  // Load initial items
+  const { user, isDemoMode } = useAuth();
+  const storageUserId = user ? user.id : 'guest';
+
+  // Load items for the current user
   const [items, setItems] = useState<ClutterItem[]>(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_ITEMS_KEY);
+      const stored = localStorage.getItem(STORAGE_ITEMS_PREFIX + storageUserId);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -25,15 +30,15 @@ export function useClutterStore() {
         }
       }
     } catch (e) {
-      console.warn('Failed to parse clutter items from localStorage', e);
+      console.warn('Failed to parse items from localStorage', e);
     }
     return INITIAL_SAMPLE_ITEMS;
   });
 
-  // Load initial settings
-  const [settings, setSettings] = useState<AppSettings>(() => {
+  // Load settings
+  const [settings, setSettings] = useState<UserSettings>(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_SETTINGS_KEY);
+      const stored = localStorage.getItem(STORAGE_SETTINGS_PREFIX + storageUserId);
       if (stored) {
         return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
       }
@@ -61,65 +66,112 @@ export function useClutterStore() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Save items to localStorage whenever they change
+  // When user switches, reload their data
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_ITEMS_KEY, JSON.stringify(items));
+      const stored = localStorage.getItem(STORAGE_ITEMS_PREFIX + storageUserId);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setItems(Array.isArray(parsed) ? parsed : INITIAL_SAMPLE_ITEMS);
+      } else {
+        setItems(INITIAL_SAMPLE_ITEMS);
+      }
+
+      const storedSettings = localStorage.getItem(STORAGE_SETTINGS_PREFIX + storageUserId);
+      if (storedSettings) {
+        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(storedSettings) });
+      }
+    } catch {
+      setItems(INITIAL_SAMPLE_ITEMS);
+    }
+  }, [storageUserId]);
+
+  // Save to LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_ITEMS_PREFIX + storageUserId, JSON.stringify(items));
     } catch (e) {
       console.error('Failed to save items to localStorage', e);
     }
-  }, [items]);
+  }, [items, storageUserId]);
 
-  // Save settings to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(settings));
+      localStorage.setItem(STORAGE_SETTINGS_PREFIX + storageUserId, JSON.stringify(settings));
     } catch (e) {
       console.error('Failed to save settings to localStorage', e);
     }
-  }, [settings]);
+  }, [settings, storageUserId]);
 
-  // Action: Add new item
+  // Check duplicate URL
+  const checkDuplicateUrl = useCallback(
+    (urlToCheck: string, excludeItemId?: string): boolean => {
+      if (!urlToCheck.trim()) return false;
+      const clean = urlToCheck.trim().toLowerCase().replace(/\/+$/, '');
+      return items.some(
+        (item) =>
+          item.id !== excludeItemId &&
+          !item.is_archived &&
+          item.url &&
+          item.url.trim().toLowerCase().replace(/\/+$/, '') === clean
+      );
+    },
+    [items]
+  );
+
+  // Add Item
   const addItem = useCallback(
-    (data: Omit<ClutterItem, 'id' | 'createdAt' | 'lastReviewedAt' | 'isCompleted'> & { customDate?: string }) => {
+    (data: {
+      title: string;
+      category: ItemCategory;
+      content_type: ContentType;
+      url?: string;
+      description?: string;
+      tags: string[];
+      customDate?: string;
+    }) => {
       const now = new Date().toISOString();
+      const createdAt = data.customDate || now;
       const newItem: ClutterItem = {
-        id: 'item-' + Date.now(),
+        id: 'item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+        user_id: user?.id,
         title: data.title.trim(),
-        type: data.type,
         category: data.category,
+        content_type: data.content_type,
         url: data.url?.trim() || undefined,
-        note: data.note?.trim() || undefined,
+        description: data.description?.trim() || undefined,
         tags: data.tags || [],
-        createdAt: data.customDate || now,
-        lastReviewedAt: data.customDate || now,
-        isCompleted: false,
-        isSample: false,
-        estimatedMinutes: data.estimatedMinutes,
+        is_completed: false,
+        is_archived: false,
+        created_at: createdAt,
+        last_reviewed_at: createdAt,
+        updated_at: now,
+        is_sample: false,
       };
 
       setItems((prev) => [newItem, ...prev]);
       addToast(
-        'Item added to ' + data.category,
-        `"${newItem.title.slice(0, 40)}${newItem.title.length > 40 ? '...' : ''}" saved successfully.`
+        `Added to ${data.category.toUpperCase()} Box`,
+        `"${newItem.title.slice(0, 35)}${newItem.title.length > 35 ? '...' : ''}" saved.`
       );
       return newItem;
     },
-    [addToast]
+    [user, addToast]
   );
 
-  // Action: Update item
+  // Update Item
   const updateItem = useCallback(
     (id: string, updates: Partial<ClutterItem>) => {
+      const now = new Date().toISOString();
       setItems((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
+        prev.map((item) => (item.id === id ? { ...item, ...updates, updated_at: now } : item))
       );
-      addToast('Item updated', 'Changes have been saved.');
+      addToast('Item updated', 'Saved changes successfully.');
     },
     [addToast]
   );
 
-  // Action: Delete item
+  // Delete Item
   const deleteItem = useCallback(
     (id: string) => {
       const target = items.find((i) => i.id === id);
@@ -129,156 +181,195 @@ export function useClutterStore() {
     [items, addToast]
   );
 
-  // Action: Toggle completion
+  // Archive Item
+  const archiveItem = useCallback(
+    (id: string) => {
+      const now = new Date().toISOString();
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, is_archived: true, archived_at: now, updated_at: now }
+            : item
+        )
+      );
+      addToast('Item archived', 'Moved to archive. Excluded from active clutter.');
+    },
+    [addToast]
+  );
+
+  // Restore Item
+  const restoreItem = useCallback(
+    (id: string) => {
+      const now = new Date().toISOString();
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, is_archived: false, archived_at: undefined, updated_at: now }
+            : item
+        )
+      );
+      addToast('Item restored', 'Returned to active Smart Box.');
+    },
+    [addToast]
+  );
+
+  // Toggle Completion
   const toggleComplete = useCallback(
     (id: string) => {
+      const now = new Date().toISOString();
+      let willComplete = false;
+
       setItems((prev) =>
         prev.map((item) => {
           if (item.id === id) {
-            const nextCompleted = !item.isCompleted;
-            if (nextCompleted && settings.enableConfetti) {
-              fireCompleteConfetti();
-            }
+            willComplete = !item.is_completed;
             return {
               ...item,
-              isCompleted: nextCompleted,
-              completedAt: nextCompleted ? new Date().toISOString() : undefined,
-              lastReviewedAt: new Date().toISOString(),
+              is_completed: willComplete,
+              completed_at: willComplete ? now : undefined,
+              last_reviewed_at: now,
+              updated_at: now,
             };
           }
           return item;
         })
       );
 
-      const target = items.find((i) => i.id === id);
-      if (target?.isCompleted) {
-        addToast('Item reopened', 'Moved back to active clutter list.', 'info');
+      if (willComplete) {
+        if (settings.enableConfetti) fireCompleteConfetti();
+        addToast('Marked as complete!', 'Great job clearing your digital clutter.');
       } else {
-        addToast('Marked as complete!', 'Great job clearing your digital queue.');
+        addToast('Item reopened', 'Returned to active backlog.', 'info');
       }
     },
-    [items, settings.enableConfetti, addToast]
+    [settings.enableConfetti, addToast]
   );
 
-  // Action: Change category
+  // Change Category
   const changeCategory = useCallback(
     (id: string, newCategory: ItemCategory) => {
+      const now = new Date().toISOString();
       setItems((prev) =>
         prev.map((item) =>
-          item.id === id ? { ...item, category: newCategory, lastReviewedAt: new Date().toISOString() } : item
+          item.id === id
+            ? { ...item, category: newCategory, last_reviewed_at: now, updated_at: now }
+            : item
         )
       );
-      addToast('Moved to ' + newCategory, 'Category updated.');
+      addToast(`Moved to ${newCategory.toUpperCase()} Box`, 'Category updated.');
     },
     [addToast]
   );
 
-  // Action: Visit item safely and touch lastReviewedAt
+  // Review / Touch Item (Refreshes timestamp)
+  const markReviewed = useCallback(
+    (id: string) => {
+      const now = new Date().toISOString();
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === id ? { ...item, last_reviewed_at: now, updated_at: now } : item
+        )
+      );
+      addToast('Marked as reviewed', 'Updated review date to today.');
+    },
+    [addToast]
+  );
+
+  // Visit Item URL safely
   const visitItem = useCallback(
     (id: string) => {
       const now = new Date().toISOString();
       const target = items.find((i) => i.id === id);
       if (!target) return;
 
-      // Update last reviewed date
       setItems((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, lastReviewedAt: now } : item))
+        prev.map((item) =>
+          item.id === id ? { ...item, last_reviewed_at: now, updated_at: now } : item
+        )
       );
 
-      // Open URL safely in new tab if present
       if (target.url) {
         const safeUrl = target.url.startsWith('http') ? target.url : `https://${target.url}`;
         window.open(safeUrl, '_blank', 'noopener,noreferrer');
         addToast('Opened link', 'Refreshed last-reviewed timestamp.');
       } else {
-        addToast('Marked as reviewed', 'Updated last-reviewed timestamp to today.');
+        addToast('Reviewed today', 'Refreshed timestamp.');
       }
     },
     [items, addToast]
   );
 
-  // Action: Touch / mark reviewed today (without opening URL)
-  const markReviewedToday = useCallback(
-    (id: string) => {
-      const now = new Date().toISOString();
-      setItems((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, lastReviewedAt: now } : item))
-      );
-      addToast('Marked as reviewed', 'Item is no longer considered forgotten.');
-    },
-    [addToast]
-  );
-
-  // Action: Rescue an Item handler
-  const rescueForgottenItem = useCallback(
-    (id: string, resolution: 'reviewed' | 'complete' | 'reference' | 'deleted') => {
+  // Rescue Forgotten Item
+  const rescueItem = useCallback(
+    (id: string, action: 'revisit' | 'complete' | 'reference' | 'archive' | 'delete') => {
       const now = new Date().toISOString();
       const target = items.find((i) => i.id === id);
       if (!target) return;
 
-      if (resolution === 'deleted') {
-        setItems((prev) => prev.filter((item) => item.id !== id));
-        addToast('Item released', 'Declutter completed. One less item in your backlog.', 'info');
+      if (action === 'delete') {
+        setItems((prev) => prev.filter((i) => i.id !== id));
+        addToast('Treasure purged', 'Declutter completed. One less item in your backlog.', 'info');
         return;
       }
 
-      if (resolution === 'complete') {
+      if (action === 'archive') {
+        setItems((prev) =>
+          prev.map((i) => (i.id === id ? { ...i, is_archived: true, archived_at: now, updated_at: now } : i))
+        );
+        addToast('Treasure archived', 'Stored safely in your archive.');
+        return;
+      }
+
+      if (action === 'complete') {
         if (settings.enableConfetti) fireRescueConfetti();
         setItems((prev) =>
-          prev.map((item) =>
-            item.id === id
-              ? {
-                  ...item,
-                  isCompleted: true,
-                  completedAt: now,
-                  lastReviewedAt: now,
-                }
-              : item
+          prev.map((i) =>
+            i.id === id
+              ? { ...i, is_completed: true, completed_at: now, last_reviewed_at: now, updated_at: now }
+              : i
           )
         );
-        addToast('Treasure Rescued & Completed!', 'Digital space decluttered.');
+        addToast('Treasure Rescued & Completed!', 'Digital space lightened.');
         return;
       }
 
-      if (resolution === 'reference') {
+      if (action === 'reference') {
         if (settings.enableConfetti) fireRescueConfetti();
         setItems((prev) =>
-          prev.map((item) =>
-            item.id === id
-              ? {
-                  ...item,
-                  category: 'REFERENCE',
-                  lastReviewedAt: now,
-                }
-              : item
+          prev.map((i) =>
+            i.id === id
+              ? { ...i, category: 'reference', last_reviewed_at: now, updated_at: now }
+              : i
           )
         );
-        addToast('Moved to Reference', 'Item preserved safely for future reference.');
+        addToast('Saved as Reference', 'Moved to REFERENCE Box.');
         return;
       }
 
-      if (resolution === 'reviewed') {
+      if (action === 'revisit') {
         if (settings.enableConfetti) fireRescueConfetti();
         setItems((prev) =>
-          prev.map((item) => (item.id === id ? { ...item, lastReviewedAt: now } : item))
+          prev.map((i) =>
+            i.id === id ? { ...i, last_reviewed_at: now, updated_at: now } : i
+          )
         );
         if (target.url) {
           const safeUrl = target.url.startsWith('http') ? target.url : `https://${target.url}`;
           window.open(safeUrl, '_blank', 'noopener,noreferrer');
         }
-        addToast('Treasure Rescued!', 'Reviewed and refreshed timestamp.');
+        addToast('Treasure Rescued!', 'Reviewed and reset forgotten clock.');
       }
     },
     [items, settings.enableConfetti, addToast]
   );
 
-  // Reset to sample data
+  // Reset demo items
   const resetToSample = useCallback(() => {
     setItems(INITIAL_SAMPLE_ITEMS);
-    addToast('Reset completed', 'Loaded 8 realistic sample items with varied dates.', 'info');
+    addToast('Demo items restored', 'Loaded 8 realistic sample items with varied dates.', 'info');
   }, [addToast]);
 
-  // Clear all data
+  // Clear all
   const clearAll = useCallback(() => {
     setItems([]);
     addToast('All items cleared', 'Your ClutterBox is completely empty.', 'info');
@@ -286,72 +377,98 @@ export function useClutterStore() {
 
   // Export JSON
   const exportData = useCallback(() => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(items, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `clutterbox-backup-${new Date().toISOString().slice(0, 10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-    addToast('Backup exported', 'ClutterBox JSON backup downloaded.');
-  }, [items, addToast]);
+    const backup = {
+      version: '3.0',
+      exportedAt: new Date().toISOString(),
+      userEmail: user?.email,
+      settings,
+      items,
+    };
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backup, null, 2));
+    const a = document.createElement('a');
+    a.href = dataStr;
+    a.download = `clutterbox-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    addToast('Backup exported', 'ClutterBox JSON file downloaded.');
+  }, [items, settings, user, addToast]);
 
   // Import JSON
   const importData = useCallback(
     (jsonString: string): boolean => {
       try {
         const parsed = JSON.parse(jsonString);
-        if (!Array.isArray(parsed)) {
-          throw new Error('Imported data must be an array of items');
+        let itemsToLoad: ClutterItem[] = [];
+
+        if (Array.isArray(parsed)) {
+          itemsToLoad = parsed;
+        } else if (parsed && Array.isArray(parsed.items)) {
+          itemsToLoad = parsed.items;
+        } else {
+          throw new Error('JSON does not contain a valid items list');
         }
-        // Minimal schema check
-        const valid = parsed.every(
-          (item) => typeof item.title === 'string' && typeof item.category === 'string'
+
+        const valid = itemsToLoad.every(
+          (i) => typeof i.title === 'string' && typeof i.category === 'string'
         );
-        if (!valid) {
-          throw new Error('Invalid item schema');
-        }
-        setItems(parsed);
-        addToast('Data imported', `Loaded ${parsed.length} items successfully.`);
+        if (!valid) throw new Error('Schema validation failed for one or more items');
+
+        setItems(itemsToLoad);
+        addToast('Data imported', `Loaded ${itemsToLoad.length} items successfully.`);
         return true;
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Invalid JSON file';
-        addToast('Import failed', message, 'error');
+      } catch (err: any) {
+        addToast('Import failed', err?.message || 'Invalid JSON file', 'error');
         return false;
       }
     },
     [addToast]
   );
 
-  // Update settings
   const updateSettings = useCallback(
-    (newSettings: Partial<AppSettings>) => {
-      setSettings((prev) => ({ ...prev, ...newSettings }));
+    (updates: Partial<UserSettings>) => {
+      setSettings((prev) => ({ ...prev, ...updates }));
       addToast('Settings updated', 'Preferences saved.');
     },
     [addToast]
   );
 
-  // Get forgotten items
-  const forgottenItems = items.filter((item) =>
-    isItemForgotten(item, settings.forgottenThresholdDays)
+  // Computed collections
+  const activeItems = useMemo(
+    () => items.filter((i) => !i.is_archived && !i.is_completed),
+    [items]
+  );
+
+  const forgottenItems = useMemo(
+    () => activeItems.filter((i) => isItemForgotten(i, settings.forgottenThresholdDays)),
+    [activeItems, settings.forgottenThresholdDays]
+  );
+
+  const clutterScoreData = useMemo(
+    () => calculateClutterScore(items, settings.forgottenThresholdDays),
+    [items, settings.forgottenThresholdDays]
   );
 
   return {
     items,
     settings,
     toasts,
+    activeItems,
     forgottenItems,
+    clutterScoreData,
     addToast,
     removeToast,
     addItem,
     updateItem,
     deleteItem,
+    archiveItem,
+    restoreItem,
     toggleComplete,
     changeCategory,
+    markReviewed,
     visitItem,
-    markReviewedToday,
-    rescueForgottenItem,
+    rescueItem,
+    checkDuplicateUrl,
     resetToSample,
     clearAll,
     exportData,

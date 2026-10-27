@@ -1,21 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { X, Globe, BookOpen, Video, FileText, Check, AlertCircle, Clock } from 'lucide-react';
-import { ClutterItem, ItemCategory, ItemType } from '../types';
+import { X, Globe, BookOpen, Video, FileText, Check, AlertCircle, AlertTriangle, Clock, Sparkles } from 'lucide-react';
+import { ClutterItem, ItemCategory, ContentType } from '../types';
+import { AICategorizationPanel } from './AICategorizationPanel';
 
 interface ItemModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (itemData: {
+  onSubmit: (data: {
     title: string;
-    type: ItemType;
     category: ItemCategory;
+    content_type: ContentType;
     url?: string;
-    note?: string;
+    description?: string;
     tags: string[];
     customDate?: string;
-    estimatedMinutes?: number;
   }) => void;
   editingItem?: ClutterItem | null;
+  onCheckDuplicateUrl: (url: string, excludeId?: string) => boolean;
 }
 
 export const ItemModal: React.FC<ItemModalProps> = ({
@@ -23,58 +24,54 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   onClose,
   onSubmit,
   editingItem,
+  onCheckDuplicateUrl,
 }) => {
   const [title, setTitle] = useState('');
-  const [type, setType] = useState<ItemType>('link');
-  const [category, setCategory] = useState<ItemCategory>('READ');
+  const [category, setCategory] = useState<ItemCategory>('read');
+  const [contentType, setContentType] = useState<ContentType>('article');
   const [url, setUrl] = useState('');
-  const [note, setNote] = useState('');
+  const [description, setDescription] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
-  const [estimatedMinutes, setEstimatedMinutes] = useState<number | undefined>(undefined);
   const [simulateForgotten, setSimulateForgotten] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDuplicateUrl, setIsDuplicateUrl] = useState(false);
 
-  // Sync state with editingItem or defaults
   useEffect(() => {
     if (editingItem) {
       setTitle(editingItem.title);
-      setType(editingItem.type);
       setCategory(editingItem.category);
+      setContentType(editingItem.content_type);
       setUrl(editingItem.url || '');
-      setNote(editingItem.note || '');
+      setDescription(editingItem.description || '');
       setTags(editingItem.tags || []);
-      setEstimatedMinutes(editingItem.estimatedMinutes);
       setSimulateForgotten(false);
+      setIsDuplicateUrl(false);
     } else {
       setTitle('');
-      setType('link');
-      setCategory('READ');
+      setCategory('read');
+      setContentType('article');
       setUrl('');
-      setNote('');
+      setDescription('');
       setTags([]);
-      setEstimatedMinutes(undefined);
       setSimulateForgotten(false);
+      setIsDuplicateUrl(false);
     }
     setError(null);
   }, [editingItem, isOpen]);
 
-  // Adjust suggested category when type changes
-  const handleTypeChange = (newType: ItemType) => {
-    setType(newType);
-    if (!editingItem) {
-      if (newType === 'note') {
-        setCategory('DO');
-      } else if (newType === 'link') {
-        setCategory('REFERENCE');
-      } else {
-        setCategory('READ');
-      }
+  // URL duplicate check
+  useEffect(() => {
+    if (url.trim()) {
+      const isDup = onCheckDuplicateUrl(url, editingItem?.id);
+      setIsDuplicateUrl(isDup);
+    } else {
+      setIsDuplicateUrl(false);
     }
-  };
+  }, [url, editingItem, onCheckDuplicateUrl]);
 
   const handleAddTag = () => {
-    const clean = tagInput.trim().replace(/^#/, '');
+    const clean = tagInput.trim().toLowerCase().replace(/^#/, '');
     if (clean && !tags.includes(clean)) {
       setTags([...tags, clean]);
       setTagInput('');
@@ -92,7 +89,6 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       return;
     }
 
-    // If type is not note, URL is recommended; validate URL syntax if entered
     if (url.trim()) {
       try {
         const testUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`;
@@ -101,27 +97,23 @@ export const ItemModal: React.FC<ItemModalProps> = ({
         setError('Please enter a valid URL (e.g., https://example.com).');
         return;
       }
-    } else if (type !== 'note' && !note.trim()) {
-      setError('Please provide either a URL or a note description.');
-      return;
     }
 
     let customDate: string | undefined = undefined;
     if (simulateForgotten && !editingItem) {
       const d = new Date();
-      d.setDate(d.getDate() - 25); // 25 days ago
+      d.setDate(d.getDate() - 25);
       customDate = d.toISOString();
     }
 
     onSubmit({
       title: title.trim(),
-      type,
       category,
+      content_type: contentType,
       url: url.trim() || undefined,
-      note: note.trim() || undefined,
+      description: description.trim() || undefined,
       tags,
       customDate,
-      estimatedMinutes: estimatedMinutes ? Number(estimatedMinutes) : undefined,
     });
 
     onClose();
@@ -138,17 +130,17 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       />
 
       {/* Modal Dialog */}
-      <div className="relative w-full max-w-lg bg-white rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden">
+      <div className="relative w-full max-w-xl max-h-[90vh] flex flex-col bg-white rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div>
             <h2 className="text-sm font-bold tracking-tight text-slate-900">
               {editingItem ? 'Edit Saved Item' : 'Quick Capture to ClutterBox'}
             </h2>
             <p className="text-xs text-slate-400">
               {editingItem
-                ? 'Update details, category box, or notes.'
-                : 'Save articles, tasks, links, or fleeting thoughts in seconds.'}
+                ? 'Update metadata, box assignment, or tags.'
+                : 'Save articles, tasks, links, or notes with optional AI classification.'}
             </p>
           </div>
           <button
@@ -160,47 +152,14 @@ export const ItemModal: React.FC<ItemModalProps> = ({
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        {/* Scrollable Form Body */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
           {error && (
             <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
           )}
-
-          {/* Item Type Segmented Selector */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Content Type
-            </label>
-            <div className="grid grid-cols-4 gap-2 p-1 bg-slate-100 rounded-xl">
-              {[
-                { id: 'link' as ItemType, label: 'Link', icon: Globe },
-                { id: 'article' as ItemType, label: 'Article', icon: BookOpen },
-                { id: 'video' as ItemType, label: 'Video', icon: Video },
-                { id: 'note' as ItemType, label: 'Note / Idea', icon: FileText },
-              ].map((t) => {
-                const Icon = t.icon;
-                const isSelected = type === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => handleTypeChange(t.id)}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-lg transition-all ${
-                      isSelected
-                        ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{t.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
 
           {/* Title */}
           <div>
@@ -215,50 +174,70 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                 setTitle(e.target.value);
                 if (error) setError(null);
               }}
-              placeholder="e.g. Modern CSS Grid Techniques, Buy anniversary gift..."
+              placeholder="e.g. Modern CSS Grid Techniques, Complete portfolio draft..."
               className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 placeholder:text-slate-400"
             />
           </div>
 
-          {/* URL (optional for notes) */}
-          {type !== 'note' && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Website URL
-              </label>
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com/article"
-                className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 placeholder:text-slate-400 font-mono"
-              />
-            </div>
-          )}
+          {/* URL with duplicate warning */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              Website URL <span className="text-slate-400 font-normal">(optional for notes/tasks)</span>
+            </label>
+            <input
+              type="text"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://example.com/guide"
+              className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 placeholder:text-slate-400 font-mono"
+            />
+            {isDuplicateUrl && (
+              <div className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                <span>Notice: This URL already exists in your ClutterBox. Saving it will create an additional record.</span>
+              </div>
+            )}
+          </div>
 
-          {/* Smart Box Category */}
+          {/* AI Smart Categorization Panel */}
+          <AICategorizationPanel
+            title={title}
+            url={url}
+            description={description}
+            currentCategory={category}
+            onApply={(suggestions) => {
+              setCategory(suggestions.category);
+              setContentType(suggestions.contentType);
+              setTags(suggestions.tags);
+              if (suggestions.descriptionSummary && !description) {
+                setDescription(suggestions.descriptionSummary);
+              }
+            }}
+          />
+
+          {/* Smart Box Category Selection */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
               Smart Box Category
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-2.5">
               {[
                 {
-                  id: 'READ' as ItemCategory,
-                  title: 'READ',
-                  desc: 'Articles & videos',
+                  id: 'read' as ItemCategory,
+                  title: 'READ Box',
+                  desc: 'Articles, blogs & videos',
                   activeColor: 'border-indigo-500 bg-indigo-50/60 text-indigo-900',
                 },
                 {
-                  id: 'DO' as ItemCategory,
-                  title: 'DO',
-                  desc: 'Tasks & actions',
+                  id: 'do' as ItemCategory,
+                  title: 'DO Box',
+                  desc: 'Actionable tasks & chores',
                   activeColor: 'border-emerald-500 bg-emerald-50/60 text-emerald-900',
                 },
                 {
-                  id: 'REFERENCE' as ItemCategory,
-                  title: 'REFERENCE',
-                  desc: 'Useful resources',
+                  id: 'reference' as ItemCategory,
+                  title: 'REFERENCE Box',
+                  desc: 'Docs, cheatsheets & tools',
                   activeColor: 'border-sky-500 bg-sky-50/60 text-sky-900',
                 },
               ].map((c) => {
@@ -268,7 +247,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                     key={c.id}
                     type="button"
                     onClick={() => setCategory(c.id)}
-                    className={`p-2.5 text-left border rounded-xl transition-all ${
+                    className={`p-3 text-left border rounded-xl transition-all ${
                       isSelected
                         ? `${c.activeColor} ring-1 ring-offset-0 font-semibold shadow-xs`
                         : 'border-slate-200 hover:border-slate-300 text-slate-600 bg-white'
@@ -282,17 +261,38 @@ export const ItemModal: React.FC<ItemModalProps> = ({
             </div>
           </div>
 
-          {/* Notes / Thoughts */}
+          {/* Content Type Picker */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Notes / Key Takeaways <span className="text-slate-400 font-normal">(optional)</span>
+              Content Type
+            </label>
+            <select
+              value={contentType}
+              onChange={(e) => setContentType(e.target.value as ContentType)}
+              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+            >
+              <option value="article">Article (Reading / Blog)</option>
+              <option value="video">Video (Tutorial / Lecture)</option>
+              <option value="task">Task (Action item / Todo)</option>
+              <option value="note">Note (Personal insight / Fleeting thought)</option>
+              <option value="link">Link (Web resource)</option>
+              <option value="document">Document (Spec / Cheatsheet)</option>
+              <option value="idea">Idea (Future project spark)</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          {/* Description / Notes */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              Description / Action Notes <span className="text-slate-400 font-normal">(optional)</span>
             </label>
             <textarea
               rows={3}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Add key takeaways, context, or action checklist..."
-              className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 placeholder:text-slate-400"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Add key takeaways, context, or action items..."
+              className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800 placeholder:text-slate-400"
             />
           </div>
 
@@ -312,8 +312,8 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                     handleAddTag();
                   }
                 }}
-                placeholder="e.g. design, react, urgent"
-                className="flex-1 px-3.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 placeholder:text-slate-400"
+                placeholder="e.g. design, react, priority"
+                className="flex-1 px-3.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800 placeholder:text-slate-400"
               />
               <button
                 type="button"
@@ -345,7 +345,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
             )}
           </div>
 
-          {/* Demo toggle for new items: simulate forgotten */}
+          {/* Demo simulation toggle */}
           {!editingItem && (
             <div className="pt-2 border-t border-slate-100">
               <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
@@ -357,14 +357,14 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                 />
                 <span className="flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 text-amber-500" />
-                  Simulate item saved 25 days ago (Demo Forgotten Treasure immediately)
+                  Simulate item saved 25 days ago (Test Forgotten Treasure immediately)
                 </span>
               </label>
             </div>
           )}
 
           {/* Form Actions */}
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-2.5 shrink-0">
             <button
               type="button"
               onClick={onClose}

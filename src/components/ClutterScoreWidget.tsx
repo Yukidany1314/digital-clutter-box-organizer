@@ -89,7 +89,7 @@ export const ClutterScoreWidget: React.FC<ClutterScoreWidgetProps> = ({
               {scoreData.description}
             </p>
             <div className="mt-2 text-[11px] text-slate-400 font-medium">
-              Formula: 40% active burden + 60% neglected backlog weight
+              Formula: round(100 × attentionItems / activeItems) · {scoreData.attentionItems} need focus
             </div>
           </div>
         </div>
@@ -104,9 +104,9 @@ export const ClutterScoreWidget: React.FC<ClutterScoreWidgetProps> = ({
               </span>
             </div>
             <div className="bg-amber-50/80 px-3.5 py-2 rounded-xl border border-amber-100">
-              <span className="block text-[11px] text-amber-700 font-medium">Forgotten</span>
+              <span className="block text-[11px] text-amber-700 font-medium">Attention</span>
               <span className="text-sm font-bold font-mono text-amber-800 tabular-nums">
-                {scoreData.forgottenItems}
+                {scoreData.attentionItems}
               </span>
             </div>
             <div className="bg-emerald-50/80 px-3.5 py-2 rounded-xl border border-emerald-100">
@@ -147,36 +147,38 @@ export const ClutterScoreWidget: React.FC<ClutterScoreWidgetProps> = ({
             </div>
 
             <p className="text-slate-500 text-xs leading-relaxed">
-              ClutterBox uses a deterministic, transparent formula without arbitrary jumps. It measures two key dimensions of digital clutter:
+              ClutterBox defines the Clutter Score as the exact proportion of active items requiring attention:
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <div className="p-3 bg-white rounded-lg border border-slate-200/60">
                 <div className="text-[11px] font-semibold text-slate-700 mb-1">
-                  1. Active Workload (40% Weight)
+                  1. Attention Items ({scoreData.attentionItems})
                 </div>
                 <div className="text-xs text-slate-500">
-                  {scoreData.activeItems} of {scoreData.totalItems} items uncompleted ({scoreData.activeRate}%).
-                  Completing or archiving items directly reduces this component.
+                  Active items that either belong to the <strong>DO Box</strong> (actionable tasks) or have been neglected for <strong>{thresholdDays}+ days</strong> without review.
                 </div>
               </div>
 
               <div className="p-3 bg-white rounded-lg border border-slate-200/60">
                 <div className="text-[11px] font-semibold text-slate-700 mb-1">
-                  2. Neglected Backlog (60% Weight)
+                  2. Active Backlog ({scoreData.activeItems})
                 </div>
                 <div className="text-xs text-slate-500">
-                  {scoreData.forgottenItems} of {scoreData.activeItems} active items haven't been reviewed in {thresholdDays}+ days ({scoreData.forgottenRate}% neglected).
-                  Revisiting or rescuing items clears this debt!
+                  Total uncompleted, unarchived records currently in your repository.
                 </div>
               </div>
             </div>
 
             <div className="text-[11px] text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200/60">
               <span>
-                Calculation: ({scoreData.activeRate}% × 40) + ({scoreData.forgottenRate}% × 60) = <strong className="text-slate-800">{scoreData.score} points</strong>
+                Calculation: round(100 × {scoreData.attentionItems} / {scoreData.activeItems || 1}) = <strong className="text-slate-800">{scoreData.score}/100 points ({scoreData.label})</strong>
               </span>
               <span className="text-indigo-600 font-medium">100% deterministic</span>
+            </div>
+
+            <div className="text-[11px] text-slate-500 bg-white p-2.5 rounded-lg border border-slate-200/60">
+              <strong>Suggested Action:</strong> {scoreData.suggestedAction}
             </div>
           </div>
         </div>
